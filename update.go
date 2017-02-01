@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -7,9 +7,7 @@ package elastic
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"strings"
 
@@ -38,6 +36,7 @@ type UpdateService struct {
 	parent           string
 	script           string
 	scriptId         string
+	scriptFile       string
 	scriptType       string
 	scriptLang       string
 	scriptParams     map[string]interface{}
@@ -55,7 +54,6 @@ type UpdateService struct {
 	doc              interface{}
 	timeout          string
 	pretty           bool
-	debug            bool
 }
 
 // NewUpdateService creates the service to update documents in Elasticsearch.
@@ -104,9 +102,16 @@ func (b *UpdateService) Script(script string) *UpdateService {
 	return b
 }
 
-// ScriptID is the id of a stored script.
+// ScriptId is the id of a stored script.
 func (b *UpdateService) ScriptId(scriptId string) *UpdateService {
 	b.scriptId = scriptId
+	return b
+}
+
+// ScriptFile is the file name of a stored script.
+// See https://www.elastic.co/guide/en/elasticsearch/reference/current/modules-scripting.html for details.
+func (b *UpdateService) ScriptFile(scriptFile string) *UpdateService {
+	b.scriptFile = scriptFile
 	return b
 }
 
@@ -218,23 +223,17 @@ func (b *UpdateService) Pretty(pretty bool) *UpdateService {
 	return b
 }
 
-// Debug logs request and response.
-func (b *UpdateService) Debug(debug bool) *UpdateService {
-	b.debug = debug
-	return b
-}
-
 // url returns the URL part of the document request.
-func (b *UpdateService) url() (string, error) {
+func (b *UpdateService) url() (string, url.Values, error) {
 	// Build url
-	urls := "/{index}/{type}/{id}/_update"
-	urls, err := uritemplates.Expand(urls, map[string]string{
+	path := "/{index}/{type}/{id}/_update"
+	path, err := uritemplates.Expand(path, map[string]string{
 		"index": b.index,
 		"type":  b.typ,
 		"id":    b.id,
 	})
 	if err != nil {
-		return "", err
+		return "", url.Values{}, err
 	}
 
 	// Parameters
@@ -273,11 +272,7 @@ func (b *UpdateService) url() (string, error) {
 		params.Set("retry_on_conflict", fmt.Sprintf("%v", *b.retryOnConflict))
 	}
 
-	if len(params) > 0 {
-		urls += "?" + params.Encode()
-	}
-
-	return urls, nil
+	return path, params, nil
 }
 
 // body returns the body part of the document request.
@@ -289,6 +284,9 @@ func (b *UpdateService) body() (interface{}, error) {
 	}
 	if b.scriptId != "" {
 		source["script_id"] = b.scriptId
+	}
+	if b.scriptFile != "" {
+		source["script_file"] = b.scriptFile
 	}
 	if b.scriptLang != "" {
 		source["lang"] = b.scriptLang
@@ -319,7 +317,7 @@ func (b *UpdateService) body() (interface{}, error) {
 
 // Do executes the update operation.
 func (b *UpdateService) Do() (*UpdateResult, error) {
-	urls, err := b.url()
+	path, params, err := b.url()
 	if err != nil {
 		return nil, err
 	}
@@ -330,37 +328,19 @@ func (b *UpdateService) Do() (*UpdateResult, error) {
 		return nil, err
 	}
 
-	// Set up a new request
-	req, err := b.client.NewRequest("POST", urls)
-	if err != nil {
-		return nil, err
-	}
-
-	// Set body
-	req.SetBodyJson(body)
-
-	if b.debug {
-		out, _ := httputil.DumpRequestOut((*http.Request)(req), true)
-		log.Printf("%s\n", string(out))
-	}
-
 	// Get response
-	res, err := b.client.c.Do((*http.Request)(req))
+	res, err := b.client.PerformRequest("POST", path, params, body)
 	if err != nil {
 		return nil, err
 	}
-	if err := checkResponse(res); err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-
-	if b.debug {
-		out, _ := httputil.DumpResponse(res, true)
-		log.Printf("%s\n", string(out))
+	// 404 indicates an error for failed updates
+	if res.StatusCode == http.StatusNotFound {
+		return nil, createResponseError(res.StatusCode, res.Body)
 	}
 
+	// Return result
 	ret := new(UpdateResult)
-	if err := json.NewDecoder(res.Body).Decode(ret); err != nil {
+	if err := json.Unmarshal(res.Body, ret); err != nil {
 		return nil, err
 	}
 	return ret, nil

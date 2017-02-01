@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -19,6 +19,7 @@ type NestedFilter struct {
 	cache      *bool
 	cacheKey   string
 	filterName string
+	innerHit   *InnerHit
 }
 
 func NewNestedFilter(path string) NestedFilter {
@@ -57,6 +58,11 @@ func (f NestedFilter) CacheKey(cacheKey string) NestedFilter {
 
 func (f NestedFilter) FilterName(filterName string) NestedFilter {
 	f.filterName = filterName
+	return f
+}
+
+func (f NestedFilter) InnerHit(innerHit *InnerHit) NestedFilter {
+	f.innerHit = innerHit
 	return f
 }
 
@@ -107,6 +113,9 @@ func (f NestedFilter) Source() interface{} {
 	}
 	if f.cacheKey != "" {
 		params["_cache_key"] = f.cacheKey
+	}
+	if f.innerHit != nil {
+		params["inner_hits"] = f.innerHit.Source()
 	}
 
 	return source

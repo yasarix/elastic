@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -12,6 +12,8 @@ type RangeFilter struct {
 	name         string
 	from         *interface{}
 	to           *interface{}
+	timeZone     string
+	format       string
 	includeLower bool
 	includeUpper bool
 	cache        *bool
@@ -22,6 +24,19 @@ type RangeFilter struct {
 
 func NewRangeFilter(name string) RangeFilter {
 	f := RangeFilter{name: name, includeLower: true, includeUpper: true}
+	return f
+}
+
+// TimeZone allows for adjusting the from/to fields using a time zone.
+// Only valid for date fields.
+func (f RangeFilter) TimeZone(timeZone string) RangeFilter {
+	f.timeZone = timeZone
+	return f
+}
+
+// Format is a valid option for date fields in a Range filter.
+func (f RangeFilter) Format(format string) RangeFilter {
+	f.format = format
 	return f
 }
 
@@ -108,6 +123,12 @@ func (f RangeFilter) Source() interface{} {
 
 	params["from"] = f.from
 	params["to"] = f.to
+	if f.timeZone != "" {
+		params["time_zone"] = f.timeZone
+	}
+	if f.format != "" {
+		params["format"] = f.format
+	}
 	params["include_lower"] = f.includeLower
 	params["include_upper"] = f.includeUpper
 

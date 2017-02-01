@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -12,6 +12,8 @@ type RangeQuery struct {
 	name         string
 	from         *interface{}
 	to           *interface{}
+	timeZone     string
+	format       string
 	includeLower bool
 	includeUpper bool
 	boost        *float64
@@ -20,6 +22,19 @@ type RangeQuery struct {
 
 func NewRangeQuery(name string) RangeQuery {
 	q := RangeQuery{name: name, includeLower: true, includeUpper: true}
+	return q
+}
+
+// TimeZone allows for adjusting the from/to fields using a time zone.
+// Only valid for date fields.
+func (q RangeQuery) TimeZone(timeZone string) RangeQuery {
+	q.timeZone = timeZone
+	return q
+}
+
+// Format is a valid option for date fields in a Range query.
+func (q RangeQuery) Format(format string) RangeQuery {
+	q.format = format
 	return q
 }
 
@@ -96,6 +111,12 @@ func (q RangeQuery) Source() interface{} {
 
 	params["from"] = q.from
 	params["to"] = q.to
+	if q.timeZone != "" {
+		params["time_zone"] = q.timeZone
+	}
+	if q.format != "" {
+		params["format"] = q.format
+	}
 	params["include_lower"] = q.includeLower
 	params["include_upper"] = q.includeUpper
 

@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -16,6 +16,7 @@ type HasParentQuery struct {
 	boost      *float32
 	scoreType  string
 	queryName  string
+	innerHit   *InnerHit
 }
 
 // NewHasParentQuery creates a new has_parent query.
@@ -42,6 +43,11 @@ func (q HasParentQuery) QueryName(queryName string) HasParentQuery {
 	return q
 }
 
+func (q HasParentQuery) InnerHit(innerHit *InnerHit) HasParentQuery {
+	q.innerHit = innerHit
+	return q
+}
+
 // Creates the query source for the ids query.
 func (q HasParentQuery) Source() interface{} {
 	// {
@@ -54,7 +60,6 @@ func (q HasParentQuery) Source() interface{} {
 	//       }
 	//   }
 	// }
-
 	source := make(map[string]interface{})
 
 	query := make(map[string]interface{})
@@ -70,6 +75,9 @@ func (q HasParentQuery) Source() interface{} {
 	}
 	if q.queryName != "" {
 		query["_name"] = q.queryName
+	}
+	if q.innerHit != nil {
+		query["inner_hits"] = q.innerHit.Source()
 	}
 	return source
 }

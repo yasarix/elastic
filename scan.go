@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -8,9 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
-	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"strings"
 
@@ -26,31 +23,33 @@ var (
 	EOS = errors.New("EOS")
 
 	// No ScrollId
-	ErrNoScrollId = errors.New("elastic: No scrollId")
+	ErrNoScrollId = errors.New("no scrollId")
 )
 
 // ScanService manages a cursor through documents in Elasticsearch.
 type ScanService struct {
-	client    *Client
-	indices   []string
-	types     []string
-	keepAlive string
-	query     Query
-	size      *int
-	pretty    bool
-	debug     bool
+	client       *Client
+	indices      []string
+	types        []string
+	keepAlive    string
+	searchSource *SearchSource
+	pretty       bool
+	routing      string
+	preference   string
+	size         *int
 }
 
+// NewScanService creates a new service to iterate through the results
+// of a query.
 func NewScanService(client *Client) *ScanService {
 	builder := &ScanService{
-		client: client,
-		query:  NewMatchAllQuery(),
-		debug:  false,
-		pretty: false,
+		client:       client,
+		searchSource: NewSearchSource().Query(NewMatchAllQuery()),
 	}
 	return builder
 }
 
+// Index sets the name of the index to use for scan.
 func (s *ScanService) Index(index string) *ScanService {
 	if s.indices == nil {
 		s.indices = make([]string, 0)
@@ -59,6 +58,7 @@ func (s *ScanService) Index(index string) *ScanService {
 	return s
 }
 
+// Indices sets the names of the indices to use for scan.
 func (s *ScanService) Indices(indices ...string) *ScanService {
 	if s.indices == nil {
 		s.indices = make([]string, 0)
@@ -67,6 +67,7 @@ func (s *ScanService) Indices(indices ...string) *ScanService {
 	return s
 }
 
+// Type restricts the scan to the given type.
 func (s *ScanService) Type(typ string) *ScanService {
 	if s.types == nil {
 		s.types = make([]string, 0)
@@ -75,6 +76,7 @@ func (s *ScanService) Type(typ string) *ScanService {
 	return s
 }
 
+// Types allows to restrict the scan to a list of types.
 func (s *ScanService) Types(types ...string) *ScanService {
 	if s.types == nil {
 		s.types = make([]string, 0)
@@ -97,29 +99,115 @@ func (s *ScanService) KeepAlive(keepAlive string) *ScanService {
 	return s
 }
 
-func (s *ScanService) Query(query Query) *ScanService {
-	s.query = query
+// Fields tells Elasticsearch to only load specific fields from a search hit.
+// See http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/search-request-fields.html.
+func (s *ScanService) Fields(fields ...string) *ScanService {
+	s.searchSource = s.searchSource.Fields(fields...)
 	return s
 }
 
+// SearchSource sets the search source builder to use with this service.
+func (s *ScanService) SearchSource(searchSource *SearchSource) *ScanService {
+	s.searchSource = searchSource
+	if s.searchSource == nil {
+		s.searchSource = NewSearchSource().Query(NewMatchAllQuery())
+	}
+	return s
+}
+
+// Routing allows for (a comma-separated) list of specific routing values.
+func (s *ScanService) Routing(routings ...string) *ScanService {
+	s.routing = strings.Join(routings, ",")
+	return s
+}
+
+// Preference specifies the node or shard the operation should be
+// performed on (default: "random").
+func (s *ScanService) Preference(preference string) *ScanService {
+	s.preference = preference
+	return s
+}
+
+// Query sets the query to perform, e.g. MatchAllQuery.
+func (s *ScanService) Query(query Query) *ScanService {
+	s.searchSource = s.searchSource.Query(query)
+	return s
+}
+
+// PostFilter is executed as the last filter. It only affects the
+// search hits but not facets. See
+// http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/search-request-post-filter.html
+// for details.
+func (s *ScanService) PostFilter(postFilter Filter) *ScanService {
+	s.searchSource = s.searchSource.PostFilter(postFilter)
+	return s
+}
+
+// FetchSource indicates whether the response should contain the stored
+// _source for every hit.
+func (s *ScanService) FetchSource(fetchSource bool) *ScanService {
+	s.searchSource = s.searchSource.FetchSource(fetchSource)
+	return s
+}
+
+// FetchSourceContext indicates how the _source should be fetched.
+func (s *ScanService) FetchSourceContext(fetchSourceContext *FetchSourceContext) *ScanService {
+	s.searchSource = s.searchSource.FetchSourceContext(fetchSourceContext)
+	return s
+}
+
+// Version can be set to true to return a version for each search hit.
+// See http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/search-request-version.html.
+func (s *ScanService) Version(version bool) *ScanService {
+	s.searchSource = s.searchSource.Version(version)
+	return s
+}
+
+// Sort the results by the given field, in the given order.
+// Use the alternative SortWithInfo to use a struct to define the sorting.
+// See http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/search-request-sort.html
+// for detailed documentation of sorting.
+func (s *ScanService) Sort(field string, ascending bool) *ScanService {
+	s.searchSource = s.searchSource.Sort(field, ascending)
+	return s
+}
+
+// SortWithInfo defines how to sort results.
+// Use the Sort func for a shortcut.
+// See http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/search-request-sort.html
+// for detailed documentation of sorting.
+func (s *ScanService) SortWithInfo(info SortInfo) *ScanService {
+	s.searchSource = s.searchSource.SortWithInfo(info)
+	return s
+}
+
+// SortBy defines how to sort results.
+// Use the Sort func for a shortcut.
+// See http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/search-request-sort.html
+// for detailed documentation of sorting.
+func (s *ScanService) SortBy(sorter ...Sorter) *ScanService {
+	s.searchSource = s.searchSource.SortBy(sorter...)
+	return s
+}
+
+// Pretty enables the caller to indent the JSON output.
 func (s *ScanService) Pretty(pretty bool) *ScanService {
 	s.pretty = pretty
 	return s
 }
 
-func (s *ScanService) Debug(debug bool) *ScanService {
-	s.debug = debug
-	return s
-}
-
+// Size is the number of results to return per shard, not per request.
+// So a size of 10 which hits 5 shards will return a maximum of 50 results
+// per scan request.
 func (s *ScanService) Size(size int) *ScanService {
 	s.size = &size
 	return s
 }
 
+// Do executes the query and returns a "server-side cursor".
 func (s *ScanService) Do() (*ScanCursor, error) {
 	// Build url
-	urls := "/"
+	path := "/"
 
 	// Indices part
 	indexPart := make([]string, 0)
@@ -133,7 +221,7 @@ func (s *ScanService) Do() (*ScanCursor, error) {
 		indexPart = append(indexPart, index)
 	}
 	if len(indexPart) > 0 {
-		urls += strings.Join(indexPart, ",")
+		path += strings.Join(indexPart, ",")
 	}
 
 	// Types
@@ -148,15 +236,17 @@ func (s *ScanService) Do() (*ScanCursor, error) {
 		typesPart = append(typesPart, typ)
 	}
 	if len(typesPart) > 0 {
-		urls += "/" + strings.Join(typesPart, ",")
+		path += "/" + strings.Join(typesPart, ",")
 	}
 
 	// Search
-	urls += "/_search"
+	path += "/_search"
 
 	// Parameters
 	params := make(url.Values)
-	params.Set("search_type", "scan")
+	if !s.searchSource.hasSort() {
+		params.Set("search_type", "scan")
+	}
 	if s.pretty {
 		params.Set("pretty", fmt.Sprintf("%v", s.pretty))
 	}
@@ -168,52 +258,24 @@ func (s *ScanService) Do() (*ScanCursor, error) {
 	if s.size != nil && *s.size > 0 {
 		params.Set("size", fmt.Sprintf("%d", *s.size))
 	}
-	if len(params) > 0 {
-		urls += "?" + params.Encode()
-	}
-
-	// Set up a new request
-	req, err := s.client.NewRequest("POST", urls)
-	if err != nil {
-		return nil, err
-	}
-
-	// Set body
-	body := make(map[string]interface{})
-
-	// Query
-	if s.query != nil {
-		body["query"] = s.query.Source()
-	}
-
-	req.SetBodyJson(body)
-
-	if s.debug {
-		out, _ := httputil.DumpRequestOut((*http.Request)(req), true)
-		fmt.Printf("%s\n", string(out))
+	if s.routing != "" {
+		params.Set("routing", s.routing)
 	}
 
 	// Get response
-	res, err := s.client.c.Do((*http.Request)(req))
+	body := s.searchSource.Source()
+	res, err := s.client.PerformRequest("POST", path, params, body)
 	if err != nil {
 		return nil, err
 	}
-	if err := checkResponse(res); err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
 
-	if s.debug {
-		out, _ := httputil.DumpResponse(res, true)
-		fmt.Printf("%s\n", string(out))
-	}
-
+	// Return result
 	searchResult := new(SearchResult)
-	if err := json.NewDecoder(res.Body).Decode(searchResult); err != nil {
+	if err := json.Unmarshal(res.Body, searchResult); err != nil {
 		return nil, err
 	}
 
-	cursor := NewScanCursor(s.client, s.keepAlive, s.pretty, s.debug, searchResult)
+	cursor := NewScanCursor(s.client, s.keepAlive, s.pretty, searchResult)
 
 	return cursor, nil
 }
@@ -226,18 +288,16 @@ type ScanCursor struct {
 	client      *Client
 	keepAlive   string
 	pretty      bool
-	debug       bool
 	currentPage int
 }
 
 // newScanCursor returns a new initialized instance
 // of scanCursor.
-func NewScanCursor(client *Client, keepAlive string, pretty, debug bool, searchResult *SearchResult) *ScanCursor {
+func NewScanCursor(client *Client, keepAlive string, pretty bool, searchResult *SearchResult) *ScanCursor {
 	return &ScanCursor{
 		client:    client,
 		keepAlive: keepAlive,
 		pretty:    pretty,
-		debug:     debug,
 		Results:   searchResult,
 	}
 }
@@ -275,11 +335,11 @@ func (c *ScanCursor) Next() (*SearchResult, error) {
 		}
 	}
 	if c.Results.ScrollId == "" {
-		return nil, ErrNoScrollId
+		return nil, EOS
 	}
 
 	// Build url
-	urls := "/_search/scroll"
+	path := "/_search/scroll"
 
 	// Parameters
 	params := make(url.Values)
@@ -291,38 +351,19 @@ func (c *ScanCursor) Next() (*SearchResult, error) {
 	} else {
 		params.Set("scroll", defaultKeepAlive)
 	}
-	urls += "?" + params.Encode()
-
-	// Set up a new request
-	req, err := c.client.NewRequest("POST", urls)
-	if err != nil {
-		return nil, err
-	}
 
 	// Set body
-	req.SetBodyString(c.Results.ScrollId)
-
-	if c.debug {
-		out, _ := httputil.DumpRequestOut((*http.Request)(req), true)
-		log.Printf("%s\n", string(out))
-	}
+	body := c.Results.ScrollId
 
 	// Get response
-	res, err := c.client.c.Do((*http.Request)(req))
+	res, err := c.client.PerformRequest("POST", path, params, body)
 	if err != nil {
 		return nil, err
 	}
-	if err := checkResponse(res); err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
 
-	if c.debug {
-		out, _ := httputil.DumpResponse(res, true)
-		log.Printf("%s\n", string(out))
-	}
-
-	if err := json.NewDecoder(res.Body).Decode(c.Results); err != nil {
+	// Return result
+	c.Results = &SearchResult{ScrollId: body}
+	if err := json.Unmarshal(res.Body, c.Results); err != nil {
 		return nil, err
 	}
 

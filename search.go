@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -7,9 +7,8 @@ package elastic
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httputil"
 	"net/url"
+	"reflect"
 	"strings"
 
 	"github.com/olivere/elastic/uritemplates"
@@ -19,6 +18,7 @@ import (
 type SearchService struct {
 	client       *Client
 	searchSource *SearchSource
+	source       interface{}
 	pretty       bool
 	searchType   string
 	indices      []string
@@ -26,7 +26,6 @@ type SearchService struct {
 	routing      string
 	preference   string
 	types        []string
-	debug        bool
 }
 
 // NewSearchService creates a new service for searching in Elasticsearch.
@@ -36,10 +35,24 @@ func NewSearchService(client *Client) *SearchService {
 	builder := &SearchService{
 		client:       client,
 		searchSource: NewSearchSource(),
-		debug:        false,
-		pretty:       false,
 	}
 	return builder
+}
+
+// SearchSource sets the search source builder to use with this service.
+func (s *SearchService) SearchSource(searchSource *SearchSource) *SearchService {
+	s.searchSource = searchSource
+	if s.searchSource == nil {
+		s.searchSource = NewSearchSource()
+	}
+	return s
+}
+
+// Source allows the user to set the request body manually without using
+// any of the structs and interfaces in Elastic.
+func (s *SearchService) Source(source interface{}) *SearchService {
+	s.source = source
+	return s
 }
 
 // Index sets the name of the index to use for search.
@@ -73,23 +86,15 @@ func (s *SearchService) Type(typ string) *SearchService {
 // Types allows to restrict the search to a list of types.
 func (s *SearchService) Types(types ...string) *SearchService {
 	if s.types == nil {
-		s.types = make([]string, len(types))
+		s.types = make([]string, 0)
 	}
 	s.types = append(s.types, types...)
 	return s
 }
 
-// Pretty enables the caller to indent the JSON output. Use it in combination
-// with Debug to see what Elasticsearch actually returned.
+// Pretty enables the caller to indent the JSON output.
 func (s *SearchService) Pretty(pretty bool) *SearchService {
 	s.pretty = pretty
-	return s
-}
-
-// Debug enables the user to print the output of the search to os.Stdout
-// when calling Do.
-func (s *SearchService) Debug(debug bool) *SearchService {
-	s.debug = debug
 	return s
 }
 
@@ -116,8 +121,8 @@ func (s *SearchService) SearchType(searchType string) *SearchService {
 }
 
 // Routing allows for (a comma-separated) list of specific routing values.
-func (s *SearchService) Routing(routing string) *SearchService {
-	s.routing = routing
+func (s *SearchService) Routing(routings ...string) *SearchService {
+	s.routing = strings.Join(routings, ",")
 	return s
 }
 
@@ -145,6 +150,19 @@ func (s *SearchService) Query(query Query) *SearchService {
 // for details.
 func (s *SearchService) PostFilter(postFilter Filter) *SearchService {
 	s.searchSource = s.searchSource.PostFilter(postFilter)
+	return s
+}
+
+// FetchSource indicates whether the response should contain the stored
+// _source for every hit.
+func (s *SearchService) FetchSource(fetchSource bool) *SearchService {
+	s.searchSource = s.searchSource.FetchSource(fetchSource)
+	return s
+}
+
+// FetchSourceContext indicates how the _source should be fetched.
+func (s *SearchService) FetchSourceContext(fetchSourceContext *FetchSourceContext) *SearchService {
+	s.searchSource = s.searchSource.FetchSourceContext(fetchSourceContext)
 	return s
 }
 
@@ -247,6 +265,15 @@ func (s *SearchService) SortWithInfo(info SortInfo) *SearchService {
 	return s
 }
 
+// SortBy defines how to sort results.
+// Use the Sort func for a shortcut.
+// See http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/search-request-sort.html
+// for detailed documentation of sorting.
+func (s *SearchService) SortBy(sorter ...Sorter) *SearchService {
+	s.searchSource = s.searchSource.SortBy(sorter...)
+	return s
+}
+
 // Fields tells Elasticsearch to only load specific fields from a search hit.
 // See http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/search-request-fields.html.
 func (s *SearchService) Fields(fields ...string) *SearchService {
@@ -257,7 +284,7 @@ func (s *SearchService) Fields(fields ...string) *SearchService {
 // Do executes the search and returns a SearchResult.
 func (s *SearchService) Do() (*SearchResult, error) {
 	// Build url
-	urls := "/"
+	path := "/"
 
 	// Indices part
 	indexPart := make([]string, 0)
@@ -270,7 +297,7 @@ func (s *SearchService) Do() (*SearchResult, error) {
 		}
 		indexPart = append(indexPart, index)
 	}
-	urls += strings.Join(indexPart, ",")
+	path += strings.Join(indexPart, ",")
 
 	// Types part
 	if len(s.types) > 0 {
@@ -284,12 +311,12 @@ func (s *SearchService) Do() (*SearchResult, error) {
 			}
 			typesPart = append(typesPart, typ)
 		}
-		urls += "/"
-		urls += strings.Join(typesPart, ",")
+		path += "/"
+		path += strings.Join(typesPart, ",")
 	}
 
 	// Search
-	urls += "/_search"
+	path += "/_search"
 
 	// Parameters
 	params := make(url.Values)
@@ -299,41 +326,25 @@ func (s *SearchService) Do() (*SearchResult, error) {
 	if s.searchType != "" {
 		params.Set("search_type", s.searchType)
 	}
-	if len(params) > 0 {
-		urls += "?" + params.Encode()
+	if s.routing != "" {
+		params.Set("routing", s.routing)
 	}
 
-	// Set up a new request
-	req, err := s.client.NewRequest("POST", urls)
+	// Perform request
+	var body interface{}
+	if s.source != nil {
+		body = s.source
+	} else {
+		body = s.searchSource.Source()
+	}
+	res, err := s.client.PerformRequest("POST", path, params, body)
 	if err != nil {
 		return nil, err
 	}
 
-	// Set body
-	req.SetBodyJson(s.searchSource.Source())
-
-	if s.debug {
-		out, _ := httputil.DumpRequestOut((*http.Request)(req), true)
-		fmt.Printf("%s\n", string(out))
-	}
-
-	// Get response
-	res, err := s.client.c.Do((*http.Request)(req))
-	if err != nil {
-		return nil, err
-	}
-	if err := checkResponse(res); err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-
-	if s.debug {
-		out, _ := httputil.DumpResponse(res, true)
-		fmt.Printf("%s\n", string(out))
-	}
-
+	// Return search results
 	ret := new(SearchResult)
-	if err := json.NewDecoder(res.Body).Decode(ret); err != nil {
+	if err := json.Unmarshal(res.Body, ret); err != nil {
 		return nil, err
 	}
 	return ret, nil
@@ -351,6 +362,32 @@ type SearchResult struct {
 	Error        string        `json:"error,omitempty"` // used in MultiSearch only
 }
 
+// TotalHits is a convenience function to return the number of hits for
+// a search result.
+func (r *SearchResult) TotalHits() int64 {
+	if r.Hits != nil {
+		return r.Hits.TotalHits
+	}
+	return 0
+}
+
+// Each is a utility function to iterate over all hits. It saves you from
+// checking for nil values. Notice that Each will ignore errors in
+// serializing JSON.
+func (r *SearchResult) Each(typ reflect.Type) []interface{} {
+	if r.Hits == nil || r.Hits.Hits == nil || len(r.Hits.Hits) == 0 {
+		return nil
+	}
+	slice := make([]interface{}, 0)
+	for _, hit := range r.Hits.Hits {
+		v := reflect.New(typ).Elem()
+		if err := json.Unmarshal(*hit.Source, v.Addr().Interface()); err == nil {
+			slice = append(slice, v.Interface())
+		}
+	}
+	return slice
+}
+
 // SearchHits specifies the list of search hits.
 type SearchHits struct {
 	TotalHits int64        `json:"total"`     // total number of hits found
@@ -360,21 +397,35 @@ type SearchHits struct {
 
 // SearchHit is a single hit.
 type SearchHit struct {
-	Score     *float64               `json:"_score"`    // computed score
-	Index     string                 `json:"_index"`    // index name
-	Id        string                 `json:"_id"`       // external or internal
-	Type      string                 `json:"_type"`     // type
-	Version   *int64                 `json:"_version"`  // version number, when Version is set to true in SearchService
-	Sort      []interface{}          `json:"sort"`      // sort information
-	Highlight SearchHitHighlight     `json:"highlight"` // highlighter information
-	Source    *json.RawMessage       `json:"_source"`   // stored document source
-	Fields    map[string]interface{} `json:"fields"`    // returned fields
+	Score          *float64                       `json:"_score"`          // computed score
+	Index          string                         `json:"_index"`          // index name
+	Id             string                         `json:"_id"`             // external or internal
+	Type           string                         `json:"_type"`           // type
+	Version        *int64                         `json:"_version"`        // version number, when Version is set to true in SearchService
+	Sort           []interface{}                  `json:"sort"`            // sort information
+	Highlight      SearchHitHighlight             `json:"highlight"`       // highlighter information
+	Source         *json.RawMessage               `json:"_source"`         // stored document source
+	Fields         map[string]interface{}         `json:"fields"`          // returned fields
+	Explanation    *SearchExplanation             `json:"_explanation"`    // explains how the score was computed
+	MatchedQueries []string                       `json:"matched_queries"` // matched queries
+	InnerHits      map[string]*SearchHitInnerHits `json:"inner_hits"`      // inner hits with ES >= 1.5.0
 
-	// Explanation
 	// Shard
 	// HighlightFields
 	// SortValues
 	// MatchedFilters
+}
+
+type SearchHitInnerHits struct {
+	Hits *SearchHits `json:"hits"`
+}
+
+// SearchExplanation explains how the score for a hit was computed.
+// See http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/search-request-explain.html.
+type SearchExplanation struct {
+	Value       float64             `json:"value"`             // e.g. 1.0
+	Description string              `json:"description"`       // e.g. "boost" or "ConstantScore(*:*), product of:"
+	Details     []SearchExplanation `json:"details,omitempty"` // recursive details
 }
 
 // Suggest
@@ -419,11 +470,21 @@ type SearchFacet struct {
 	Entries []searchFacetEntry `json:"entries"`
 }
 
-// searchFacetTerm is the result of a terms facet.
-// See http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/search-facets-terms-facet.html.
+// searchFacetTerm is the result of a terms/terms_stats facet.
+// See https://www.elastic.co/guide/en/elasticsearch/reference/1.7/search-facets-terms-facet.html
+// and https://www.elastic.co/guide/en/elasticsearch/reference/1.7/search-facets-terms-stats-facet.html.
 type searchFacetTerm struct {
-	Term  string `json:"term"`
-	Count int    `json:"count"`
+	Term  interface{} `json:"term"`
+	Count int         `json:"count"`
+
+	// The following fields are returned for terms_stats facets.
+	// See https://www.elastic.co/guide/en/elasticsearch/reference/1.7/search-facets-terms-stats-facet.html.
+
+	TotalCount int     `json:"total_count"`
+	Min        float64 `json:"min"`
+	Max        float64 `json:"max"`
+	Total      float64 `json:"total"`
+	Mean       float64 `json:"mean"`
 }
 
 // searchFacetRange is the result of a range facet.

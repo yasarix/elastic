@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -12,7 +12,9 @@ package elastic
 type CardinalityAggregation struct {
 	field              string
 	script             string
+	scriptFile         string
 	lang               string
+	format             string
 	params             map[string]interface{}
 	subAggregations    map[string]Aggregation
 	precisionThreshold *int64
@@ -37,8 +39,18 @@ func (a CardinalityAggregation) Script(script string) CardinalityAggregation {
 	return a
 }
 
+func (a CardinalityAggregation) ScriptFile(scriptFile string) CardinalityAggregation {
+	a.scriptFile = scriptFile
+	return a
+}
+
 func (a CardinalityAggregation) Lang(lang string) CardinalityAggregation {
 	a.lang = lang
+	return a
+}
+
+func (a CardinalityAggregation) Format(format string) CardinalityAggregation {
+	a.format = format
 	return a
 }
 
@@ -84,8 +96,14 @@ func (a CardinalityAggregation) Source() interface{} {
 	if a.script != "" {
 		opts["script"] = a.script
 	}
+	if a.scriptFile != "" {
+		opts["script_file"] = a.scriptFile
+	}
 	if a.lang != "" {
 		opts["lang"] = a.lang
+	}
+	if a.format != "" {
+		opts["format"] = a.format
 	}
 	if len(a.params) > 0 {
 		opts["params"] = a.params

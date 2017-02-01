@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -12,7 +12,9 @@ package elastic
 type StatsAggregation struct {
 	field           string
 	script          string
+	scriptFile      string
 	lang            string
+	format          string
 	params          map[string]interface{}
 	subAggregations map[string]Aggregation
 }
@@ -35,8 +37,18 @@ func (a StatsAggregation) Script(script string) StatsAggregation {
 	return a
 }
 
+func (a StatsAggregation) ScriptFile(scriptFile string) StatsAggregation {
+	a.scriptFile = scriptFile
+	return a
+}
+
 func (a StatsAggregation) Lang(lang string) StatsAggregation {
 	a.lang = lang
+	return a
+}
+
+func (a StatsAggregation) Format(format string) StatsAggregation {
+	a.format = format
 	return a
 }
 
@@ -70,8 +82,14 @@ func (a StatsAggregation) Source() interface{} {
 	if a.script != "" {
 		opts["script"] = a.script
 	}
+	if a.scriptFile != "" {
+		opts["script_file"] = a.scriptFile
+	}
 	if a.lang != "" {
 		opts["lang"] = a.lang
+	}
+	if a.format != "" {
+		opts["format"] = a.format
 	}
 	if len(a.params) > 0 {
 		opts["params"] = a.params

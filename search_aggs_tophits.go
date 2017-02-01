@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -102,6 +102,11 @@ func (a TopHitsAggregation) Sort(field string, ascending bool) TopHitsAggregatio
 
 func (a TopHitsAggregation) SortWithInfo(info SortInfo) TopHitsAggregation {
 	a.searchSource = a.searchSource.SortWithInfo(info)
+	return a
+}
+
+func (a TopHitsAggregation) SortBy(sorter ...Sorter) TopHitsAggregation {
+	a.searchSource = a.searchSource.SortBy(sorter...)
 	return a
 }
 

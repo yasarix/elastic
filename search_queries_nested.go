@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -18,6 +18,7 @@ type NestedQuery struct {
 	scoreMode string
 	boost     *float32
 	queryName string
+	innerHit  *InnerHit
 }
 
 // Creates a new nested_query query.
@@ -52,6 +53,11 @@ func (q NestedQuery) Boost(boost float32) NestedQuery {
 
 func (q NestedQuery) QueryName(queryName string) NestedQuery {
 	q.queryName = queryName
+	return q
+}
+
+func (q NestedQuery) InnerHit(innerHit *InnerHit) NestedQuery {
+	q.innerHit = innerHit
 	return q
 }
 
@@ -99,6 +105,9 @@ func (q NestedQuery) Source() interface{} {
 	}
 	if q.queryName != "" {
 		nq["_name"] = q.queryName
+	}
+	if q.innerHit != nil {
+		nq["inner_hits"] = q.innerHit.Source()
 	}
 	return query
 }

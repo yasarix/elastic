@@ -20,3 +20,10 @@ _cgo_export.*
 _testmain.go
 
 *.exe
+
+/generator
+/cluster-test/cluster-test
+/cluster-test/*.log
+/cluster-test/es-chaos-monkey
+/spec
+/tmp

@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -10,6 +10,7 @@ package elastic
 type DateHistogramAggregation struct {
 	field           string
 	script          string
+	scriptFile      string
 	lang            string
 	params          map[string]interface{}
 	subAggregations map[string]Aggregation
@@ -44,6 +45,11 @@ func (a DateHistogramAggregation) Field(field string) DateHistogramAggregation {
 
 func (a DateHistogramAggregation) Script(script string) DateHistogramAggregation {
 	a.script = script
+	return a
+}
+
+func (a DateHistogramAggregation) ScriptFile(scriptFile string) DateHistogramAggregation {
+	a.scriptFile = scriptFile
 	return a
 }
 
@@ -228,6 +234,9 @@ func (a DateHistogramAggregation) Source() interface{} {
 	}
 	if a.script != "" {
 		opts["script"] = a.script
+	}
+	if a.scriptFile != "" {
+		opts["script_file"] = a.scriptFile
 	}
 	if a.lang != "" {
 		opts["lang"] = a.lang

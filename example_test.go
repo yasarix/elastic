@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -8,7 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
+	"os"
+	"reflect"
 	"time"
 
 	"github.com/olivere/elastic"
@@ -26,12 +27,17 @@ type Tweet struct {
 }
 
 func Example() {
+	errorlog := log.New(os.Stdout, "APP ", log.LstdFlags)
+
 	// Obtain a client. You can provide your own HTTP client here.
-	client, err := elastic.NewClient(http.DefaultClient)
+	client, err := elastic.NewClient(elastic.SetErrorLog(errorlog))
 	if err != nil {
 		// Handle error
 		panic(err)
 	}
+
+	// Trace request and response details like this
+	//client.SetTracer(log.New(os.Stdout, "", 0))
 
 	// Ping the Elasticsearch server to get e.g. the version number
 	info, code, err := client.Ping().Do()
@@ -122,7 +128,6 @@ func Example() {
 		Query(&termQuery).  // specify the query
 		Sort("user", true). // sort by "user" field, ascending
 		From(0).Size(10).   // take documents 0-9
-		Debug(true).        // print request and response to stdout
 		Pretty(true).       // pretty print request and response JSON
 		Do()                // execute
 	if err != nil {
@@ -134,7 +139,19 @@ func Example() {
 	// and all kinds of other information from Elasticsearch.
 	fmt.Printf("Query took %d milliseconds\n", searchResult.TookInMillis)
 
-	// Number of hits
+	// Each is a convenience function that iterates over hits in a search result.
+	// It makes sure you don't need to check for nil values in the response.
+	// However, it ignores errors in serialization. If you want full control
+	// over iterating the hits, see below.
+	var ttyp Tweet
+	for _, item := range searchResult.Each(reflect.TypeOf(ttyp)) {
+		t := item.(Tweet)
+		fmt.Printf("Tweet by %s: %s\n", t.User, t.Message)
+	}
+	// TotalHits is another convenience function that works even when something goes wrong.
+	fmt.Printf("Found a total of %d tweets\n", searchResult.TotalHits())
+
+	// Here's how you iterate through results with full control over each step.
 	if searchResult.Hits != nil {
 		fmt.Printf("Found a total of %d tweets\n", searchResult.Hits.TotalHits)
 
@@ -185,7 +202,7 @@ func Example() {
 
 func ExampleClient_NewClient_default() {
 	// Obtain a client to the Elasticsearch instance on http://localhost:9200.
-	client, err := elastic.NewClient(http.DefaultClient)
+	client, err := elastic.NewClient()
 	if err != nil {
 		// Handle error
 		fmt.Printf("connection failed: %v\n", err)
@@ -200,7 +217,27 @@ func ExampleClient_NewClient_default() {
 func ExampleClient_NewClient_cluster() {
 	// Obtain a client for an Elasticsearch cluster of two nodes,
 	// running on 10.0.1.1 and 10.0.1.2.
-	client, err := elastic.NewClient(http.DefaultClient, "http://10.0.1.1:9200", "http://10.0.1.2:9200")
+	client, err := elastic.NewClient(elastic.SetURL("http://10.0.1.1:9200", "http://10.0.1.2:9200"))
+	if err != nil {
+		// Handle error
+		panic(err)
+	}
+	_ = client
+}
+
+func ExampleClient_NewClient_manyOptions() {
+	// Obtain a client for an Elasticsearch cluster of two nodes,
+	// running on 10.0.1.1 and 10.0.1.2. Do not run the sniffer.
+	// Set the healthcheck interval to 10s. When requests fail,
+	// retry 5 times. Print error messages to os.Stderr and informational
+	// messages to os.Stdout.
+	client, err := elastic.NewClient(
+		elastic.SetURL("http://10.0.1.1:9200", "http://10.0.1.2:9200"),
+		elastic.SetSniff(false),
+		elastic.SetHealthcheckInterval(10*time.Second),
+		elastic.SetMaxRetries(5),
+		elastic.SetErrorLog(log.New(os.Stderr, "ELASTIC ", log.LstdFlags)),
+		elastic.SetInfoLog(log.New(os.Stdout, "", log.LstdFlags)))
 	if err != nil {
 		// Handle error
 		panic(err)
@@ -210,7 +247,7 @@ func ExampleClient_NewClient_cluster() {
 
 func ExampleIndexExistsService() {
 	// Get a client to the local Elasticsearch instance.
-	client, err := elastic.NewClient(http.DefaultClient)
+	client, err := elastic.NewClient()
 	if err != nil {
 		// Handle error
 		panic(err)
@@ -228,7 +265,7 @@ func ExampleIndexExistsService() {
 
 func ExampleCreateIndexService() {
 	// Get a client to the local Elasticsearch instance.
-	client, err := elastic.NewClient(http.DefaultClient)
+	client, err := elastic.NewClient()
 	if err != nil {
 		// Handle error
 		panic(err)
@@ -246,7 +283,7 @@ func ExampleCreateIndexService() {
 
 func ExampleDeleteIndexService() {
 	// Get a client to the local Elasticsearch instance.
-	client, err := elastic.NewClient(http.DefaultClient)
+	client, err := elastic.NewClient()
 	if err != nil {
 		// Handle error
 		panic(err)
@@ -264,7 +301,7 @@ func ExampleDeleteIndexService() {
 
 func ExampleSearchService() {
 	// Get a client to the local Elasticsearch instance.
-	client, err := elastic.NewClient(http.DefaultClient)
+	client, err := elastic.NewClient()
 	if err != nil {
 		// Handle error
 		panic(err)
@@ -277,7 +314,6 @@ func ExampleSearchService() {
 		Query(&termQuery).  // specify the query
 		Sort("user", true). // sort by "user" field, ascending
 		From(0).Size(10).   // take documents 0-9
-		Debug(true).        // print request and response to stdout
 		Pretty(true).       // pretty print request and response JSON
 		Do()                // execute
 	if err != nil {
@@ -315,7 +351,7 @@ func ExampleSearchService() {
 
 func ExampleAggregations() {
 	// Get a client to the local Elasticsearch instance.
-	client, err := elastic.NewClient(http.DefaultClient)
+	client, err := elastic.NewClient()
 	if err != nil {
 		// Handle error
 		panic(err)
@@ -332,7 +368,6 @@ func ExampleAggregations() {
 		Query(elastic.NewMatchAllQuery()). // return all results, but ...
 		SearchType("count").               // ... do not return hits, just the count
 		Aggregation("timeline", timeline). // add our aggregation to the query
-		Debug(true).                       // print request and response to stdout
 		Pretty(true).                      // pretty print request and response JSON
 		Do()                               // execute
 	if err != nil {
@@ -343,7 +378,7 @@ func ExampleAggregations() {
 	// Access "timeline" aggregate in search result.
 	agg, found := searchResult.Aggregations.Terms("timeline")
 	if !found {
-		log.Fatalf("we sould have a terms aggregation called %q", "timeline")
+		log.Fatalf("we should have a terms aggregation called %q", "timeline")
 	}
 	for _, userBucket := range agg.Buckets {
 		// Every bucket should have the user field as key.
@@ -359,8 +394,59 @@ func ExampleAggregations() {
 	}
 }
 
+func ExampleSearchResult() {
+	client, err := elastic.NewClient()
+	if err != nil {
+		panic(err)
+	}
+
+	// Do a search
+	searchResult, err := client.Search().Index("twitter").Query(elastic.NewMatchAllQuery()).Do()
+	if err != nil {
+		panic(err)
+	}
+
+	// searchResult is of type SearchResult and returns hits, suggestions,
+	// and all kinds of other information from Elasticsearch.
+	fmt.Printf("Query took %d milliseconds\n", searchResult.TookInMillis)
+
+	// Each is a utility function that iterates over hits in a search result.
+	// It makes sure you don't need to check for nil values in the response.
+	// However, it ignores errors in serialization. If you want full control
+	// over iterating the hits, see below.
+	var ttyp Tweet
+	for _, item := range searchResult.Each(reflect.TypeOf(ttyp)) {
+		t := item.(Tweet)
+		fmt.Printf("Tweet by %s: %s\n", t.User, t.Message)
+	}
+	fmt.Printf("Found a total of %d tweets\n", searchResult.TotalHits())
+
+	// Here's how you iterate hits with full control.
+	if searchResult.Hits != nil {
+		fmt.Printf("Found a total of %d tweets\n", searchResult.Hits.TotalHits)
+
+		// Iterate through results
+		for _, hit := range searchResult.Hits.Hits {
+			// hit.Index contains the name of the index
+
+			// Deserialize hit.Source into a Tweet (could also be just a map[string]interface{}).
+			var t Tweet
+			err := json.Unmarshal(*hit.Source, &t)
+			if err != nil {
+				// Deserialization failed
+			}
+
+			// Work with tweet
+			fmt.Printf("Tweet by %s: %s\n", t.User, t.Message)
+		}
+	} else {
+		// No hits
+		fmt.Print("Found no tweets\n")
+	}
+}
+
 func ExamplePutTemplateService() {
-	client, err := elastic.NewClient(http.DefaultClient)
+	client, err := elastic.NewClient()
 	if err != nil {
 		panic(err)
 	}
@@ -382,7 +468,7 @@ func ExamplePutTemplateService() {
 }
 
 func ExampleGetTemplateService() {
-	client, err := elastic.NewClient(http.DefaultClient)
+	client, err := elastic.NewClient()
 	if err != nil {
 		panic(err)
 	}
@@ -396,7 +482,7 @@ func ExampleGetTemplateService() {
 }
 
 func ExampleDeleteTemplateService() {
-	client, err := elastic.NewClient(http.DefaultClient)
+	client, err := elastic.NewClient()
 	if err != nil {
 		panic(err)
 	}
@@ -412,7 +498,7 @@ func ExampleDeleteTemplateService() {
 }
 
 func ExampleClusterHealthService() {
-	client, err := elastic.NewClient(http.DefaultClient)
+	client, err := elastic.NewClient()
 	if err != nil {
 		panic(err)
 	}
@@ -429,7 +515,7 @@ func ExampleClusterHealthService() {
 }
 
 func ExampleClusterHealthService_WaitForGreen() {
-	client, err := elastic.NewClient(http.DefaultClient)
+	client, err := elastic.NewClient()
 	if err != nil {
 		panic(err)
 	}
@@ -447,7 +533,7 @@ func ExampleClusterHealthService_WaitForGreen() {
 }
 
 func ExampleClusterStateService() {
-	client, err := elastic.NewClient(http.DefaultClient)
+	client, err := elastic.NewClient()
 	if err != nil {
 		panic(err)
 	}

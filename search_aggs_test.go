@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -6,14 +6,16 @@ package elastic
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestAggs(t *testing.T) {
+	//client := setupTestClientAndCreateIndex(t, SetTraceLog(log.New(os.Stdout, "", log.LstdFlags)))
 	client := setupTestClientAndCreateIndex(t)
 
-	esversion, err := client.ElasticsearchVersion(defaultUrl)
+	esversion, err := client.ElasticsearchVersion(DefaultURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +73,7 @@ func TestAggs(t *testing.T) {
 	// Terms Aggregate by user name
 	globalAgg := NewGlobalAggregation()
 	usersAgg := NewTermsAggregation().Field("user").Size(10).OrderByCountDesc()
+	retweetsAgg := NewTermsAggregation().Field("retweets").Size(10)
 	avgRetweetsAgg := NewAvgAggregation().Field("retweets")
 	minRetweetsAgg := NewMinAggregation().Field("retweets")
 	maxRetweetsAgg := NewMaxAggregation().Field("retweets")
@@ -83,6 +86,7 @@ func TestAggs(t *testing.T) {
 	cardinalityAgg := NewCardinalityAggregation().Field("user")
 	significantTermsAgg := NewSignificantTermsAggregation().Field("message")
 	retweetsRangeAgg := NewRangeAggregation().Field("retweets").Lt(10).Between(10, 100).Gt(100)
+	retweetsKeyedRangeAgg := NewRangeAggregation().Field("retweets").Keyed(true).Lt(10).Between(10, 100).Gt(100)
 	dateRangeAgg := NewDateRangeAggregation().Field("created").Lt("2012-01-01").Between("2012-01-01", "2013-01-01").Gt("2013-01-01")
 	missingTagsAgg := NewMissingAggregation().Field("tags")
 	retweetsHistoAgg := NewHistogramAggregation().Field("retweets").Interval(100)
@@ -99,6 +103,7 @@ func TestAggs(t *testing.T) {
 	builder := client.Search().Index(testIndexName).Query(&all)
 	builder = builder.Aggregation("global", globalAgg)
 	builder = builder.Aggregation("users", usersAgg)
+	builder = builder.Aggregation("retweets", retweetsAgg)
 	builder = builder.Aggregation("avgRetweets", avgRetweetsAgg)
 	builder = builder.Aggregation("minRetweets", minRetweetsAgg)
 	builder = builder.Aggregation("maxRetweets", maxRetweetsAgg)
@@ -111,6 +116,7 @@ func TestAggs(t *testing.T) {
 	builder = builder.Aggregation("usersCardinality", cardinalityAgg)
 	builder = builder.Aggregation("significantTerms", significantTermsAgg)
 	builder = builder.Aggregation("retweetsRange", retweetsRangeAgg)
+	builder = builder.Aggregation("retweetsKeyedRange", retweetsKeyedRangeAgg)
 	builder = builder.Aggregation("dateRange", dateRangeAgg)
 	builder = builder.Aggregation("missingTags", missingTagsAgg)
 	builder = builder.Aggregation("retweetsHisto", retweetsHistoAgg)
@@ -123,9 +129,7 @@ func TestAggs(t *testing.T) {
 		countByUserAgg := NewFiltersAggregation().Filters(NewTermFilter("user", "olivere"), NewTermFilter("user", "sandrae"))
 		builder = builder.Aggregation("countByUser", countByUserAgg)
 	}
-	searchResult, err := builder.
-		// Pretty(true).Debug(true).
-		Do()
+	searchResult, err := builder.Do()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,6 +190,63 @@ func TestAggs(t *testing.T) {
 	}
 	if termsAggRes.Buckets[1].DocCount != 1 {
 		t.Errorf("expected %d; got: %d", 1, termsAggRes.Buckets[1].DocCount)
+	}
+
+	// A terms aggregate with keys that are not strings
+	retweetsAggRes, found := agg.Terms("retweets")
+	if !found {
+		t.Errorf("expected %v; got: %v", true, found)
+	}
+	if retweetsAggRes == nil {
+		t.Fatalf("expected != nil; got: nil")
+	}
+	if len(retweetsAggRes.Buckets) != 3 {
+		t.Fatalf("expected %d; got: %d", 3, len(retweetsAggRes.Buckets))
+	}
+
+	if retweetsAggRes.Buckets[0].Key != float64(0) {
+		t.Errorf("expected %v; got: %v", float64(0), retweetsAggRes.Buckets[0].Key)
+	}
+	if got, err := retweetsAggRes.Buckets[0].KeyNumber.Int64(); err != nil {
+		t.Errorf("expected %d; got: %v", 0, retweetsAggRes.Buckets[0].Key)
+	} else if got != 0 {
+		t.Errorf("expected %d; got: %d", 0, got)
+	}
+	if retweetsAggRes.Buckets[0].KeyNumber != "0" {
+		t.Errorf("expected %q; got: %q", "0", retweetsAggRes.Buckets[0].KeyNumber)
+	}
+	if retweetsAggRes.Buckets[0].DocCount != 1 {
+		t.Errorf("expected %d; got: %d", 1, retweetsAggRes.Buckets[0].DocCount)
+	}
+
+	if retweetsAggRes.Buckets[1].Key != float64(12) {
+		t.Errorf("expected %v; got: %v", float64(12), retweetsAggRes.Buckets[1].Key)
+	}
+	if got, err := retweetsAggRes.Buckets[1].KeyNumber.Int64(); err != nil {
+		t.Errorf("expected %d; got: %v", 0, retweetsAggRes.Buckets[1].KeyNumber)
+	} else if got != 12 {
+		t.Errorf("expected %d; got: %d", 12, got)
+	}
+	if retweetsAggRes.Buckets[1].KeyNumber != "12" {
+		t.Errorf("expected %q; got: %q", "12", retweetsAggRes.Buckets[1].KeyNumber)
+	}
+	if retweetsAggRes.Buckets[1].DocCount != 1 {
+		t.Errorf("expected %d; got: %d", 1, retweetsAggRes.Buckets[1].DocCount)
+	}
+
+	if retweetsAggRes.Buckets[2].Key != float64(108) {
+		t.Errorf("expected %v; got: %v", float64(108), retweetsAggRes.Buckets[2].Key)
+	}
+	if got, err := retweetsAggRes.Buckets[2].KeyNumber.Int64(); err != nil {
+		t.Errorf("expected %d; got: %v", 108, retweetsAggRes.Buckets[2].KeyNumber)
+	} else if got != 108 {
+		t.Errorf("expected %d; got: %d", 108, got)
+	}
+	if retweetsAggRes.Buckets[2].KeyNumber != "108" {
+		t.Errorf("expected %q; got: %q", "108", retweetsAggRes.Buckets[2].KeyNumber)
+	}
+	if retweetsAggRes.Buckets[2].DocCount != 1 {
+		t.Errorf("expected %d; got: %d", 1, retweetsAggRes.Buckets[2].DocCount)
 	}
 
 	// avgRetweets
@@ -361,8 +422,11 @@ func TestAggs(t *testing.T) {
 	if percentilesAggRes == nil {
 		t.Fatalf("expected != nil; got: nil")
 	}
-	if len(percentilesAggRes.Values) != 7 {
-		t.Fatalf("expected %d; got: %d\nValues are: %#v", 7, len(percentilesAggRes.Values), percentilesAggRes.Values)
+	// ES 1.4.x returns  7: {"1.0":...}
+	// ES 1.5.0 returns 14: {"1.0":..., "1.0_as_string":...}
+	// So we're relaxing the test here.
+	if len(percentilesAggRes.Values) == 0 {
+		t.Errorf("expected at least %d value; got: %d\nValues are: %#v", 1, len(percentilesAggRes.Values), percentilesAggRes.Values)
 	}
 	if _, found := percentilesAggRes.Values["0.0"]; found {
 		t.Errorf("expected %v; got: %v", false, found)
@@ -385,8 +449,8 @@ func TestAggs(t *testing.T) {
 	if percentileRanksAggRes == nil {
 		t.Fatalf("expected != nil; got: nil")
 	}
-	if len(percentileRanksAggRes.Values) != 3 {
-		t.Fatalf("expected %d; got %d\nValues are: %#v", 3, len(percentileRanksAggRes.Values), percentileRanksAggRes.Values)
+	if len(percentileRanksAggRes.Values) == 0 {
+		t.Errorf("expected at least %d value; got %d\nValues are: %#v", 1, len(percentileRanksAggRes.Values), percentileRanksAggRes.Values)
 	}
 	if _, found := percentileRanksAggRes.Values["0.0"]; found {
 		t.Errorf("expected %v; got: %v", true, found)
@@ -489,6 +553,43 @@ func TestAggs(t *testing.T) {
 	}
 	if rangeAggRes.Buckets[2].DocCount != 1 {
 		t.Errorf("expected %d; got: %d", 1, rangeAggRes.Buckets[2].DocCount)
+	}
+
+	// retweetsKeyedRange
+	keyedRangeAggRes, found := agg.KeyedRange("retweetsKeyedRange")
+	if !found {
+		t.Errorf("expected %v; got: %v", true, found)
+	}
+	if keyedRangeAggRes == nil {
+		t.Fatal("expected != nil; got: nil")
+	}
+	if len(keyedRangeAggRes.Buckets) != 3 {
+		t.Fatalf("expected %d; got: %d", 3, len(keyedRangeAggRes.Buckets))
+	}
+	_, found = keyedRangeAggRes.Buckets["no-such-key"]
+	if found {
+		t.Fatalf("expected bucket to not be found; got: %v", found)
+	}
+	bucket, found := keyedRangeAggRes.Buckets["*-10.0"]
+	if !found {
+		t.Fatalf("expected bucket to be found; got: %v", found)
+	}
+	if bucket.DocCount != 1 {
+		t.Errorf("expected %d; got: %d", 1, bucket.DocCount)
+	}
+	bucket, found = keyedRangeAggRes.Buckets["10.0-100.0"]
+	if !found {
+		t.Fatalf("expected bucket to be found; got: %v", found)
+	}
+	if bucket.DocCount != 1 {
+		t.Errorf("expected %d; got: %d", 1, bucket.DocCount)
+	}
+	bucket, found = keyedRangeAggRes.Buckets["100.0-*"]
+	if !found {
+		t.Fatalf("expected bucket to be found; got: %v", found)
+	}
+	if bucket.DocCount != 1 {
+		t.Errorf("expected %d; got: %d", 1, bucket.DocCount)
 	}
 
 	// dateRange
@@ -747,6 +848,59 @@ func TestAggs(t *testing.T) {
 		if countByUserAggRes.Buckets[1].DocCount != 1 {
 			t.Errorf("expected %d; got: %d", 1, countByUserAggRes.Buckets[1].DocCount)
 		}
+	}
+}
+
+// TestAggsMarshal ensures that marshaling aggregations back into a string
+// does not yield base64 encoded data. See https://github.com/olivere/elastic/issues/51
+// and https://groups.google.com/forum/#!topic/Golang-Nuts/38ShOlhxAYY for details.
+func TestAggsMarshal(t *testing.T) {
+	client := setupTestClientAndCreateIndex(t)
+
+	tweet1 := tweet{
+		User:     "olivere",
+		Retweets: 108,
+		Message:  "Welcome to Golang and Elasticsearch.",
+		Image:    "http://golang.org/doc/gopher/gophercolor.png",
+		Tags:     []string{"golang", "elasticsearch"},
+		Location: "48.1333,11.5667", // lat,lon
+		Created:  time.Date(2012, 12, 12, 17, 38, 34, 0, time.UTC),
+	}
+
+	// Add all documents
+	_, err := client.Index().Index(testIndexName).Type("tweet").Id("1").BodyJson(&tweet1).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Flush().Index(testIndexName).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Match all should return all documents
+	all := NewMatchAllQuery()
+	dhagg := NewDateHistogramAggregation().Field("created").Interval("year")
+
+	// Run query
+	builder := client.Search().Index(testIndexName).Query(&all)
+	builder = builder.Aggregation("dhagg", dhagg)
+	searchResult, err := builder.Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if searchResult.TotalHits() != 1 {
+		t.Errorf("expected Hits.TotalHits = %d; got: %d", 1, searchResult.TotalHits())
+	}
+	if _, found := searchResult.Aggregations["dhagg"]; !found {
+		t.Fatalf("expected aggregation %q", "dhagg")
+	}
+	buf, err := json.Marshal(searchResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(buf)
+	if i := strings.Index(s, `{"dhagg":{"buckets":[{"key_as_string":"2012-01-01`); i < 0 {
+		t.Errorf("expected to serialize aggregation into string; got: %v", s)
 	}
 }
 
@@ -1685,6 +1839,112 @@ func TestAggsTerms(t *testing.T) {
 	}
 }
 
+func TestAggsTermsWithNumericKeys(t *testing.T) {
+	s := `{
+	"users" : {
+	  "doc_count_error_upper_bound" : 1,
+	  "sum_other_doc_count" : 2,
+	  "buckets" : [ {
+	    "key" : 17,
+	    "doc_count" : 2
+	  }, {
+	    "key" : 21,
+	    "doc_count" : 1
+	  } ]
+	}
+}`
+
+	aggs := new(Aggregations)
+	err := json.Unmarshal([]byte(s), &aggs)
+	if err != nil {
+		t.Fatalf("expected no error decoding; got: %v", err)
+	}
+
+	agg, found := aggs.Terms("users")
+	if !found {
+		t.Fatalf("expected aggregation to be found; got: %v", found)
+	}
+	if agg == nil {
+		t.Fatalf("expected aggregation != nil; got: %v", agg)
+	}
+	if agg.Buckets == nil {
+		t.Fatalf("expected aggregation buckets != nil; got: %v", agg.Buckets)
+	}
+	if len(agg.Buckets) != 2 {
+		t.Errorf("expected %d bucket entries; got: %d", 2, len(agg.Buckets))
+	}
+	if agg.Buckets[0].Key != float64(17) {
+		t.Errorf("expected key %v; got: %v", 17, agg.Buckets[0].Key)
+	}
+	if got, err := agg.Buckets[0].KeyNumber.Int64(); err != nil {
+		t.Errorf("expected to convert key to int64; got: %v", err)
+	} else if got != 17 {
+		t.Errorf("expected key %v; got: %v", 17, agg.Buckets[0].Key)
+	}
+	if agg.Buckets[0].DocCount != 2 {
+		t.Errorf("expected doc count %d; got: %d", 2, agg.Buckets[0].DocCount)
+	}
+	if agg.Buckets[1].Key != float64(21) {
+		t.Errorf("expected key %v; got: %v", 21, agg.Buckets[1].Key)
+	}
+	if got, err := agg.Buckets[1].KeyNumber.Int64(); err != nil {
+		t.Errorf("expected to convert key to int64; got: %v", err)
+	} else if got != 21 {
+		t.Errorf("expected key %v; got: %v", 21, agg.Buckets[1].Key)
+	}
+	if agg.Buckets[1].DocCount != 1 {
+		t.Errorf("expected doc count %d; got: %d", 1, agg.Buckets[1].DocCount)
+	}
+}
+
+func TestAggsTermsWithBoolKeys(t *testing.T) {
+	s := `{
+	"users" : {
+	  "doc_count_error_upper_bound" : 1,
+	  "sum_other_doc_count" : 2,
+	  "buckets" : [ {
+	    "key" : true,
+	    "doc_count" : 2
+	  }, {
+	    "key" : false,
+	    "doc_count" : 1
+	  } ]
+	}
+}`
+
+	aggs := new(Aggregations)
+	err := json.Unmarshal([]byte(s), &aggs)
+	if err != nil {
+		t.Fatalf("expected no error decoding; got: %v", err)
+	}
+
+	agg, found := aggs.Terms("users")
+	if !found {
+		t.Fatalf("expected aggregation to be found; got: %v", found)
+	}
+	if agg == nil {
+		t.Fatalf("expected aggregation != nil; got: %v", agg)
+	}
+	if agg.Buckets == nil {
+		t.Fatalf("expected aggregation buckets != nil; got: %v", agg.Buckets)
+	}
+	if len(agg.Buckets) != 2 {
+		t.Errorf("expected %d bucket entries; got: %d", 2, len(agg.Buckets))
+	}
+	if agg.Buckets[0].Key != true {
+		t.Errorf("expected key %v; got: %v", true, agg.Buckets[0].Key)
+	}
+	if agg.Buckets[0].DocCount != 2 {
+		t.Errorf("expected doc count %d; got: %d", 2, agg.Buckets[0].DocCount)
+	}
+	if agg.Buckets[1].Key != false {
+		t.Errorf("expected key %v; got: %v", false, agg.Buckets[1].Key)
+	}
+	if agg.Buckets[1].DocCount != 1 {
+		t.Errorf("expected doc count %d; got: %d", 1, agg.Buckets[1].DocCount)
+	}
+}
+
 func TestAggsSignificantTerms(t *testing.T) {
 	s := `{
 	"significantCrimeTypes" : {
@@ -2350,3 +2610,18 @@ func TestAggsSubAggregates(t *testing.T) {
 		t.Errorf("expected key_as_string %q; got: %q", "2012-01-01T00:00:00.000Z", *ts.Buckets[0].KeyAsString)
 	}
 }
+
+/*
+// TestAggsRawMessage is a test for issue #51 (https://github.com/olivere/elastic/issues/51).
+// See also: http://play.golang.org/p/b8fzGMxrMC
+func TestAggsRawMessage(t *testing.T) {
+	f := json.RawMessage([]byte(`42`))
+	m := Aggregations(map[string]*json.RawMessage{
+		"k": &f,
+	})
+	b, _ := json.Marshal(m)
+	if string(b) != `{"k":42}` {
+		t.Errorf("expected %s; got: %s", `{"k":42}`, string(b))
+	}
+}
+*/

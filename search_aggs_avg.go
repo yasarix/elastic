@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -13,7 +13,9 @@ package elastic
 type AvgAggregation struct {
 	field           string
 	script          string
+	scriptFile      string
 	lang            string
+	format          string
 	params          map[string]interface{}
 	subAggregations map[string]Aggregation
 }
@@ -36,8 +38,18 @@ func (a AvgAggregation) Script(script string) AvgAggregation {
 	return a
 }
 
+func (a AvgAggregation) ScriptFile(scriptFile string) AvgAggregation {
+	a.scriptFile = scriptFile
+	return a
+}
+
 func (a AvgAggregation) Lang(lang string) AvgAggregation {
 	a.lang = lang
+	return a
+}
+
+func (a AvgAggregation) Format(format string) AvgAggregation {
+	a.format = format
 	return a
 }
 
@@ -71,8 +83,14 @@ func (a AvgAggregation) Source() interface{} {
 	if a.script != "" {
 		opts["script"] = a.script
 	}
+	if a.scriptFile != "" {
+		opts["script_file"] = a.scriptFile
+	}
 	if a.lang != "" {
 		opts["lang"] = a.lang
+	}
+	if a.format != "" {
+		opts["format"] = a.format
 	}
 	if len(a.params) > 0 {
 		opts["params"] = a.params

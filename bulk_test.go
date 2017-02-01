@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -19,7 +19,7 @@ func TestBulk(t *testing.T) {
 	index2Req := NewBulkIndexRequest().Index(testIndexName).Type("tweet").Id("2").Doc(tweet2)
 	delete1Req := NewBulkDeleteRequest().Index(testIndexName).Type("tweet").Id("1")
 
-	bulkRequest := client.Bulk() //.Debug(true)
+	bulkRequest := client.Bulk()
 	bulkRequest = bulkRequest.Add(index1Req)
 	bulkRequest = bulkRequest.Add(index2Req)
 	bulkRequest = bulkRequest.Add(delete1Req)
@@ -65,7 +65,7 @@ func TestBulk(t *testing.T) {
 		42,
 	}
 	update1Req := NewBulkUpdateRequest().Index(testIndexName).Type("tweet").Id("2").Doc(&updateDoc)
-	bulkRequest = client.Bulk() // .Debug(true)
+	bulkRequest = client.Bulk()
 	bulkRequest = bulkRequest.Add(update1Req)
 
 	if bulkRequest.NumberOfActions() != 1 {
@@ -118,7 +118,7 @@ func TestBulkWithIndexSetOnClient(t *testing.T) {
 	index2Req := NewBulkIndexRequest().Index(testIndexName).Type("tweet").Id("2").Doc(tweet2)
 	delete1Req := NewBulkDeleteRequest().Index(testIndexName).Type("tweet").Id("1")
 
-	bulkRequest := client.Bulk().Index(testIndexName).Type("tweet") //.Debug(true)
+	bulkRequest := client.Bulk().Index(testIndexName).Type("tweet")
 	bulkRequest = bulkRequest.Add(index1Req)
 	bulkRequest = bulkRequest.Add(index2Req)
 	bulkRequest = bulkRequest.Add(delete1Req)
@@ -127,7 +127,7 @@ func TestBulkWithIndexSetOnClient(t *testing.T) {
 		t.Errorf("expected bulkRequest.NumberOfActions %d; got %d", 3, bulkRequest.NumberOfActions())
 	}
 
-	bulkResponse, err := bulkRequest.Do() // .Debug(true).Do()
+	bulkResponse, err := bulkRequest.Do()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestBulkRequestsSerialization(t *testing.T) {
 		Retweets: 42,
 	})
 
-	bulkRequest := client.Bulk() //.Debug(true)
+	bulkRequest := client.Bulk()
 	bulkRequest = bulkRequest.Add(index1Req)
 	bulkRequest = bulkRequest.Add(index2Req)
 	bulkRequest = bulkRequest.Add(delete1Req)
@@ -197,7 +197,7 @@ func TestBulkRequestsSerialization(t *testing.T) {
 	}
 
 	// Run the bulk request
-	bulkResponse, err := bulkRequest.Do() // .Debug(true).Do()
+	bulkResponse, err := bulkRequest.Do()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,6 +280,15 @@ func TestBulkRequestsSerialization(t *testing.T) {
 		t.Errorf("expected updated[0].Version == %d; got %d", 2, updated[0].Version)
 	}
 
+	// Succeeded actions
+	succeeded := bulkResponse.Succeeded()
+	if succeeded == nil {
+		t.Fatal("expected succeeded to be != nil; got nil")
+	}
+	if len(succeeded) != 4 {
+		t.Fatalf("expected len(succeeded) == %d; got %d", 4, len(succeeded))
+	}
+
 	// ById
 	id1Results := bulkResponse.ById("1")
 	if id1Results == nil {
@@ -305,5 +314,57 @@ func TestBulkRequestsSerialization(t *testing.T) {
 	}
 	if id1Results[1].Version != 2 {
 		t.Errorf("expected id1Results[1].Version == %d; got %d", 2, id1Results[1].Version)
+	}
+}
+
+func TestFailedBulkRequests(t *testing.T) {
+	js := `{
+  "took" : 2,
+  "errors" : true,
+  "items" : [ {
+    "index" : {
+      "_index" : "elastic-test",
+      "_type" : "tweet",
+      "_id" : "1",
+      "_version" : 1,
+      "status" : 201
+    }
+  }, {
+    "create" : {
+      "_index" : "elastic-test",
+      "_type" : "tweet",
+      "_id" : "2",
+      "_version" : 1,
+      "status" : 423,
+      "error" : "Locked"
+    }
+  }, {
+    "delete" : {
+      "_index" : "elastic-test",
+      "_type" : "tweet",
+      "_id" : "1",
+      "_version" : 2,
+      "status" : 404,
+      "found" : false
+    }
+  }, {
+    "update" : {
+      "_index" : "elastic-test",
+      "_type" : "tweet",
+      "_id" : "2",
+      "_version" : 2,
+      "status" : 200
+    }
+  } ]
+}`
+
+	var resp BulkResponse
+	err := json.Unmarshal([]byte(js), &resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := resp.Failed()
+	if len(failed) != 2 {
+		t.Errorf("expected %d failed items; got: %d", 2, len(failed))
 	}
 }

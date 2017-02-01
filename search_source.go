@@ -1,3 +1,7 @@
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
+// Use of this source code is governed by a MIT-license.
+// See http://olivere.mit-license.org/license.txt for details.
+
 package elastic
 
 import (
@@ -14,6 +18,7 @@ type SearchSource struct {
 	explain                  *bool
 	version                  *bool
 	sorts                    []SortInfo
+	sorters                  []Sorter
 	trackScores              bool
 	minScore                 *float64
 	timeout                  string
@@ -31,14 +36,17 @@ type SearchSource struct {
 	defaultRescoreWindowSize *int
 	indexBoosts              map[string]float64
 	stats                    []string
+	innerHits                map[string]*InnerHit
 }
 
+// NewSearchSource initializes a new SearchSource.
 func NewSearchSource() *SearchSource {
 	return &SearchSource{
 		from:            -1,
 		size:            -1,
 		trackScores:     false,
 		sorts:           make([]SortInfo, 0),
+		sorters:         make([]Sorter, 0),
 		fieldDataFields: make([]string, 0),
 		scriptFields:    make([]*ScriptField, 0),
 		partialFields:   make([]*PartialField, 0),
@@ -47,91 +55,124 @@ func NewSearchSource() *SearchSource {
 		rescores:        make([]*Rescore, 0),
 		indexBoosts:     make(map[string]float64),
 		stats:           make([]string, 0),
+		innerHits:       make(map[string]*InnerHit),
 	}
 }
 
+// Query sets the query to use with this search source.
 func (s *SearchSource) Query(query Query) *SearchSource {
 	s.query = query
 	return s
 }
 
-// PostFilter is executed as the last filter. It only affects the
-// search hits but not facets.
+// PostFilter will be executed after the query has been executed and
+// only affects the search hits, not the aggregations.
+// This filter is always executed as the last filtering mechanism.
 func (s *SearchSource) PostFilter(postFilter Filter) *SearchSource {
 	s.postFilter = postFilter
 	return s
 }
 
+// From index to start the search from. Defaults to 0.
 func (s *SearchSource) From(from int) *SearchSource {
 	s.from = from
 	return s
 }
 
+// Size is the number of search hits to return. Defaults to 10.
 func (s *SearchSource) Size(size int) *SearchSource {
 	s.size = size
 	return s
 }
 
+// MinScore sets the minimum score below which docs will be filtered out.
 func (s *SearchSource) MinScore(minScore float64) *SearchSource {
 	s.minScore = &minScore
 	return s
 }
 
+// Explain indicates whether each search hit should be returned with
+// an explanation of the hit (ranking).
 func (s *SearchSource) Explain(explain bool) *SearchSource {
 	s.explain = &explain
 	return s
 }
 
+// Version indicates whether each search hit should be returned with
+// a version associated to it.
 func (s *SearchSource) Version(version bool) *SearchSource {
 	s.version = &version
 	return s
 }
 
+// Timeout controls how long a search is allowed to take, e.g. "1s" or "500ms".
 func (s *SearchSource) Timeout(timeout string) *SearchSource {
 	s.timeout = timeout
 	return s
 }
 
+// TimeoutInMillis controls how many milliseconds a search is allowed
+// to take before it is canceled.
 func (s *SearchSource) TimeoutInMillis(timeoutInMillis int) *SearchSource {
 	s.timeout = fmt.Sprintf("%dms", timeoutInMillis)
 	return s
 }
 
+// Sort adds a sort order.
 func (s *SearchSource) Sort(field string, ascending bool) *SearchSource {
 	s.sorts = append(s.sorts, SortInfo{Field: field, Ascending: ascending})
 	return s
 }
 
+// SortWithInfo adds a sort order.
 func (s *SearchSource) SortWithInfo(info SortInfo) *SearchSource {
 	s.sorts = append(s.sorts, info)
 	return s
 }
 
+// SortBy	adds a sort order.
+func (s *SearchSource) SortBy(sorter ...Sorter) *SearchSource {
+	s.sorters = append(s.sorters, sorter...)
+	return s
+}
+
+func (s *SearchSource) hasSort() bool {
+	return len(s.sorts) > 0 || len(s.sorters) > 0
+}
+
+// TrackScores is applied when sorting and controls if scores will be
+// tracked as well. Defaults to false.
 func (s *SearchSource) TrackScores(trackScores bool) *SearchSource {
 	s.trackScores = trackScores
 	return s
 }
 
+// Facet adds a facet to perform as part of the search.
 func (s *SearchSource) Facet(name string, facet Facet) *SearchSource {
 	s.facets[name] = facet
 	return s
 }
 
+// Aggregation adds an aggreation to perform as part of the search.
 func (s *SearchSource) Aggregation(name string, aggregation Aggregation) *SearchSource {
 	s.aggregations[name] = aggregation
 	return s
 }
 
+// DefaultRescoreWindowSize sets the rescore window size for rescores
+// that don't specify their window.
 func (s *SearchSource) DefaultRescoreWindowSize(defaultRescoreWindowSize int) *SearchSource {
 	s.defaultRescoreWindowSize = &defaultRescoreWindowSize
 	return s
 }
 
+// Highlight adds highlighting to the search.
 func (s *SearchSource) Highlight(highlight *Highlight) *SearchSource {
 	s.highlight = highlight
 	return s
 }
 
+// Highlighter returns the highlighter.
 func (s *SearchSource) Highlighter() *Highlight {
 	if s.highlight == nil {
 		s.highlight = NewHighlight()
@@ -139,26 +180,33 @@ func (s *SearchSource) Highlighter() *Highlight {
 	return s.highlight
 }
 
+// GlobalSuggestText defines the global text to use with all suggesters.
+// This avoids repetition.
 func (s *SearchSource) GlobalSuggestText(text string) *SearchSource {
 	s.globalSuggestText = text
 	return s
 }
 
+// Suggester adds a suggester to the search.
 func (s *SearchSource) Suggester(suggester Suggester) *SearchSource {
 	s.suggesters = append(s.suggesters, suggester)
 	return s
 }
 
+// AddRescorer adds a rescorer to the search.
 func (s *SearchSource) AddRescore(rescore *Rescore) *SearchSource {
 	s.rescores = append(s.rescores, rescore)
 	return s
 }
 
+// ClearRescorers removes all rescorers from the search.
 func (s *SearchSource) ClearRescores() *SearchSource {
 	s.rescores = make([]*Rescore, 0)
 	return s
 }
 
+// FetchSource indicates whether the response should contain the stored
+// _source for every hit.
 func (s *SearchSource) FetchSource(fetchSource bool) *SearchSource {
 	if s.fetchSourceContext == nil {
 		s.fetchSourceContext = NewFetchSourceContext(fetchSource)
@@ -168,11 +216,14 @@ func (s *SearchSource) FetchSource(fetchSource bool) *SearchSource {
 	return s
 }
 
+// FetchSourceContext indicates how the _source should be fetched.
 func (s *SearchSource) FetchSourceContext(fetchSourceContext *FetchSourceContext) *SearchSource {
 	s.fetchSourceContext = fetchSourceContext
 	return s
 }
 
+// Fields	sets the fields to load and return as part of the search request.
+// If none are specified, the source of the document will be returned.
 func (s *SearchSource) Fields(fieldNames ...string) *SearchSource {
 	if s.fieldNames == nil {
 		s.fieldNames = make([]string, 0)
@@ -181,6 +232,9 @@ func (s *SearchSource) Fields(fieldNames ...string) *SearchSource {
 	return s
 }
 
+// Field adds a single field to load and return (note, must be stored) as
+// part of the search request. If none are specified, the source of the
+// document will be returned.
 func (s *SearchSource) Field(fieldName string) *SearchSource {
 	if s.fieldNames == nil {
 		s.fieldNames = make([]string, 0)
@@ -189,51 +243,71 @@ func (s *SearchSource) Field(fieldName string) *SearchSource {
 	return s
 }
 
+// NoFields indicates that no fields should be loaded, resulting in only
+// id and type to be returned per field.
 func (s *SearchSource) NoFields() *SearchSource {
 	s.fieldNames = make([]string, 0)
 	return s
 }
 
+// FieldDataFields adds one or more fields to load from the field data cache
+// and return as part of the search request.
 func (s *SearchSource) FieldDataFields(fieldDataFields ...string) *SearchSource {
 	s.fieldDataFields = append(s.fieldDataFields, fieldDataFields...)
 	return s
 }
 
+// FieldDataField adds a single field to load from the field data cache
+// and return as part of the search request.
 func (s *SearchSource) FieldDataField(fieldDataField string) *SearchSource {
 	s.fieldDataFields = append(s.fieldDataFields, fieldDataField)
 	return s
 }
 
+// ScriptFields adds one or more script fields with the provided scripts.
 func (s *SearchSource) ScriptFields(scriptFields ...*ScriptField) *SearchSource {
 	s.scriptFields = append(s.scriptFields, scriptFields...)
 	return s
 }
 
+// ScriptField adds a single script field with the provided script.
 func (s *SearchSource) ScriptField(scriptField *ScriptField) *SearchSource {
 	s.scriptFields = append(s.scriptFields, scriptField)
 	return s
 }
 
+// PartialFields adds partial fields.
 func (s *SearchSource) PartialFields(partialFields ...*PartialField) *SearchSource {
 	s.partialFields = append(s.partialFields, partialFields...)
 	return s
 }
 
+// PartialField adds a partial field.
 func (s *SearchSource) PartialField(partialField *PartialField) *SearchSource {
 	s.partialFields = append(s.partialFields, partialField)
 	return s
 }
 
+// IndexBoost sets the boost that a specific index will receive when the
+// query is executed against it.
 func (s *SearchSource) IndexBoost(index string, boost float64) *SearchSource {
 	s.indexBoosts[index] = boost
 	return s
 }
 
+// Stats group this request will be aggregated under.
 func (s *SearchSource) Stats(statsGroup ...string) *SearchSource {
 	s.stats = append(s.stats, statsGroup...)
 	return s
 }
 
+// InnerHit adds an inner hit to return with the result.
+func (s *SearchSource) InnerHit(name string, innerHit *InnerHit) *SearchSource {
+	s.innerHits[name] = innerHit
+	return s
+}
+
+// Source returns the serializable JSON for the source builder.
 func (s *SearchSource) Source() interface{} {
 	source := make(map[string]interface{})
 
@@ -294,7 +368,13 @@ func (s *SearchSource) Source() interface{} {
 		source["script_fields"] = sfmap
 	}
 
-	if len(s.sorts) > 0 {
+	if len(s.sorters) > 0 {
+		sortarr := make([]interface{}, 0)
+		for _, sorter := range s.sorters {
+			sortarr = append(sortarr, sorter.Source())
+		}
+		source["sort"] = sortarr
+	} else if len(s.sorts) > 0 {
 		sortarr := make([]interface{}, 0)
 		for _, sort := range s.sorts {
 			sortarr = append(sortarr, sort.Source())
@@ -365,6 +445,41 @@ func (s *SearchSource) Source() interface{} {
 
 	if len(s.stats) > 0 {
 		source["stats"] = s.stats
+	}
+
+	if len(s.innerHits) > 0 {
+		// Top-level inner hits
+		// See http://www.elastic.co/guide/en/elasticsearch/reference/1.5/search-request-inner-hits.html#top-level-inner-hits
+		// "inner_hits": {
+		//   "<inner_hits_name>": {
+		//     "<path|type>": {
+		//       "<path-to-nested-object-field|child-or-parent-type>": {
+		//         <inner_hits_body>,
+		//         [,"inner_hits" : { [<sub_inner_hits>]+ } ]?
+		//       }
+		//     }
+		//   },
+		//   [,"<inner_hits_name_2>" : { ... } ]*
+		// }
+		m := make(map[string]interface{})
+		for name, hit := range s.innerHits {
+			if hit.path != "" {
+				path := make(map[string]interface{})
+				path[hit.path] = hit.Source()
+				m[name] = map[string]interface{}{
+					"path": path,
+				}
+			} else if hit.typ != "" {
+				typ := make(map[string]interface{})
+				typ[hit.typ] = hit.Source()
+				m[name] = map[string]interface{}{
+					"type": typ,
+				}
+			} else {
+				// TODO the Java client throws here, because either path or typ must be specified
+			}
+		}
+		source["inner_hits"] = m
 	}
 
 	return source

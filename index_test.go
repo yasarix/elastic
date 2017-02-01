@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -6,7 +6,9 @@ package elastic
 
 import (
 	"encoding/json"
-	"net/http"
+	"fmt"
+	"log"
+	"os"
 	"testing"
 	"time"
 )
@@ -21,6 +23,16 @@ const (
 		"number_of_replicas":0
 	},
 	"mappings":{
+		"_default_": {
+			"_timestamp": {
+				"enabled": true,
+				"store": "yes"
+			},
+			"_ttl": {
+				"enabled": true,
+				"store": "yes"
+			}
+		},
 		"tweet":{
 			"properties":{
 				"tags":{
@@ -33,6 +45,11 @@ const (
 					"type":"completion",
 					"payloads":true
 				}
+			}
+		},
+		"comment":{
+			"_parent": {
+				"type":	"tweet"
 			}
 		}
 	}
@@ -51,8 +68,43 @@ type tweet struct {
 	Suggest  *SuggestField `json:"suggest_field,omitempty"`
 }
 
-func setupTestClient(t *testing.T) *Client {
-	client, err := NewClient(http.DefaultClient)
+func (t tweet) String() string {
+	return fmt.Sprintf("tweet{User:%q,Message:%q,Retweets:%d}", t.User, t.Message, t.Retweets)
+}
+
+type comment struct {
+	User    string    `json:"user"`
+	Comment string    `json:"comment"`
+	Created time.Time `json:"created,omitempty"`
+}
+
+func (c comment) String() string {
+	return fmt.Sprintf("comment{User:%q,Comment:%q}", c.User, c.Comment)
+}
+
+func isTravis() bool {
+	return os.Getenv("TRAVIS") != ""
+}
+
+func travisGoVersion() string {
+	return os.Getenv("TRAVIS_GO_VERSION")
+}
+
+type logger interface {
+	Error(args ...interface{})
+	Errorf(format string, args ...interface{})
+	Fatal(args ...interface{})
+	Fatalf(format string, args ...interface{})
+	Fail()
+	FailNow()
+	Log(args ...interface{})
+	Logf(format string, args ...interface{})
+}
+
+func setupTestClient(t logger, options ...ClientOptionFunc) (client *Client) {
+	var err error
+
+	client, err = NewClient(options...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,8 +115,8 @@ func setupTestClient(t *testing.T) *Client {
 	return client
 }
 
-func setupTestClientAndCreateIndex(t *testing.T) *Client {
-	client := setupTestClient(t)
+func setupTestClientAndCreateIndex(t logger, options ...ClientOptionFunc) *Client {
+	client := setupTestClient(t, options...)
 
 	// Create index
 	createIndex, err := client.CreateIndex(testIndexName).Body(testMapping).Do()
@@ -84,6 +136,41 @@ func setupTestClientAndCreateIndex(t *testing.T) *Client {
 		t.Errorf("expected result to be != nil; got: %v", createIndex2)
 	}
 
+	return client
+}
+
+func setupTestClientAndCreateIndexAndLog(t logger, options ...ClientOptionFunc) *Client {
+	return setupTestClientAndCreateIndex(t, SetTraceLog(log.New(os.Stdout, "", 0)))
+}
+
+func setupTestClientAndCreateIndexAndAddDocs(t logger, options ...ClientOptionFunc) *Client {
+	client := setupTestClientAndCreateIndex(t, options...)
+
+	tweet1 := tweet{User: "olivere", Message: "Welcome to Golang and Elasticsearch."}
+	tweet2 := tweet{User: "olivere", Message: "Another unrelated topic."}
+	tweet3 := tweet{User: "sandrae", Message: "Cycling is fun."}
+	comment1 := comment{User: "nico", Comment: "You bet."}
+
+	_, err := client.Index().Index(testIndexName).Type("tweet").Id("1").BodyJson(&tweet1).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Index().Index(testIndexName).Type("tweet").Id("2").BodyJson(&tweet2).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Index().Index(testIndexName).Type("tweet").Id("3").Routing("someroutingkey").BodyJson(&tweet3).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Index().Index(testIndexName).Type("comment").Id("1").Parent("3").BodyJson(&comment1).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Flush().Index(testIndexName).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
 	return client
 }
 
@@ -383,5 +470,83 @@ func TestDocumentLifecycleWithAutomaticIDGeneration(t *testing.T) {
 	}
 	if exists {
 		t.Errorf("expected exists %v; got %v", false, exists)
+	}
+}
+
+func TestIndexCreateExistsOpenCloseDelete(t *testing.T) {
+	// TODO: Find out how to make these test robust
+	t.Skip("test fails regularly with 409 (Conflict): " +
+		"IndexPrimaryShardNotAllocatedException[[elastic-test] " +
+		"primary not allocated post api... skipping")
+
+	client := setupTestClient(t)
+
+	// Create index
+	createIndex, err := client.CreateIndex(testIndexName).Body(testMapping).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createIndex == nil {
+		t.Fatalf("expected response; got: %v", createIndex)
+	}
+	if !createIndex.Acknowledged {
+		t.Errorf("expected ack for creating index; got: %v", createIndex.Acknowledged)
+	}
+
+	// Exists
+	indexExists, err := client.IndexExists(testIndexName).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !indexExists {
+		t.Fatalf("expected index exists=%v; got %v", true, indexExists)
+	}
+
+	// Flush
+	_, err = client.Flush().Index(testIndexName).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Close index
+	closeIndex, err := client.CloseIndex(testIndexName).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closeIndex == nil {
+		t.Fatalf("expected response; got: %v", closeIndex)
+	}
+	if !closeIndex.Acknowledged {
+		t.Errorf("expected ack for closing index; got: %v", closeIndex.Acknowledged)
+	}
+
+	// Open index
+	openIndex, err := client.OpenIndex(testIndexName).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if openIndex == nil {
+		t.Fatalf("expected response; got: %v", openIndex)
+	}
+	if !openIndex.Acknowledged {
+		t.Errorf("expected ack for opening index; got: %v", openIndex.Acknowledged)
+	}
+
+	// Flush
+	_, err = client.Flush().Index(testIndexName).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete index
+	deleteIndex, err := client.DeleteIndex(testIndexName).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleteIndex == nil {
+		t.Fatalf("expected response; got: %v", deleteIndex)
+	}
+	if !deleteIndex.Acknowledged {
+		t.Errorf("expected ack for deleting index; got %v", deleteIndex.Acknowledged)
 	}
 }

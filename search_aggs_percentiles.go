@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -9,7 +9,9 @@ package elastic
 type PercentilesAggregation struct {
 	field           string
 	script          string
+	scriptFile      string
 	lang            string
+	format          string
 	params          map[string]interface{}
 	subAggregations map[string]Aggregation
 	percentiles     []float64
@@ -36,8 +38,18 @@ func (a PercentilesAggregation) Script(script string) PercentilesAggregation {
 	return a
 }
 
+func (a PercentilesAggregation) ScriptFile(scriptFile string) PercentilesAggregation {
+	a.scriptFile = scriptFile
+	return a
+}
+
 func (a PercentilesAggregation) Lang(lang string) PercentilesAggregation {
 	a.lang = lang
+	return a
+}
+
+func (a PercentilesAggregation) Format(format string) PercentilesAggregation {
+	a.format = format
 	return a
 }
 
@@ -93,8 +105,14 @@ func (a PercentilesAggregation) Source() interface{} {
 	if a.script != "" {
 		opts["script"] = a.script
 	}
+	if a.scriptFile != "" {
+		opts["script_file"] = a.scriptFile
+	}
 	if a.lang != "" {
 		opts["lang"] = a.lang
+	}
+	if a.format != "" {
+		opts["format"] = a.format
 	}
 	if len(a.params) > 0 {
 		opts["params"] = a.params

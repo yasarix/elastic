@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -7,8 +7,6 @@ package elastic
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httputil"
 	"net/url"
 
 	"github.com/olivere/elastic/uritemplates"
@@ -23,7 +21,6 @@ type DeleteService struct {
 	refresh *bool
 	version *int
 	pretty  bool
-	debug   bool
 }
 
 func NewDeleteService(client *Client) *DeleteService {
@@ -70,14 +67,21 @@ func (s *DeleteService) Pretty(pretty bool) *DeleteService {
 	return s
 }
 
-func (s *DeleteService) Debug(debug bool) *DeleteService {
-	s.debug = debug
-	return s
-}
-
+// Do deletes the document. It fails if any of index, type, and identifier
+// are missing.
 func (s *DeleteService) Do() (*DeleteResult, error) {
+	if s.index == "" {
+		return nil, ErrMissingIndex
+	}
+	if s._type == "" {
+		return nil, ErrMissingType
+	}
+	if s.id == "" {
+		return nil, ErrMissingId
+	}
+
 	// Build url
-	urls, err := uritemplates.Expand("/{index}/{type}/{id}", map[string]string{
+	path, err := uritemplates.Expand("/{index}/{type}/{id}", map[string]string{
 		"index": s.index,
 		"type":  s._type,
 		"id":    s.id,
@@ -100,38 +104,16 @@ func (s *DeleteService) Do() (*DeleteResult, error) {
 	if s.pretty {
 		params.Set("pretty", fmt.Sprintf("%v", s.pretty))
 	}
-	if len(params) > 0 {
-		urls += "?" + params.Encode()
-	}
-
-	// Set up a new request
-	req, err := s.client.NewRequest("DELETE", urls)
-	if err != nil {
-		return nil, err
-	}
-
-	if s.debug {
-		out, _ := httputil.DumpRequestOut((*http.Request)(req), true)
-		fmt.Printf("%s\n", string(out))
-	}
 
 	// Get response
-	res, err := s.client.c.Do((*http.Request)(req))
+	res, err := s.client.PerformRequest("DELETE", path, params, nil)
 	if err != nil {
 		return nil, err
 	}
-	if err := checkResponse(res); err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
 
-	if s.debug {
-		out, _ := httputil.DumpResponse(res, true)
-		fmt.Printf("%s\n", string(out))
-	}
-
+	// Return response
 	ret := new(DeleteResult)
-	if err := json.NewDecoder(res.Body).Decode(ret); err != nil {
+	if err := json.Unmarshal(res.Body, ret); err != nil {
 		return nil, err
 	}
 	return ret, nil

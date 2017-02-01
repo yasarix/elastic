@@ -1,3 +1,7 @@
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
+// Use of this source code is governed by a MIT-license.
+// See http://olivere.mit-license.org/license.txt for details.
+
 package elastic
 
 import (
@@ -13,6 +17,24 @@ func TestSignificantTermsAggregation(t *testing.T) {
 	}
 	got := string(data)
 	expected := `{"significant_terms":{"field":"crime_type"}}`
+	if got != expected {
+		t.Errorf("expected\n%s\n,got:\n%s", expected, got)
+	}
+}
+
+func TestSignificantTermsAggregationWithArgs(t *testing.T) {
+	agg := NewSignificantTermsAggregation().
+		Field("crime_type").
+		ExecutionHint("map").
+		ShardSize(5).
+		MinDocCount(10).
+		BackgroundFilter(NewTermFilter("city", "London"))
+	data, err := json.Marshal(agg.Source())
+	if err != nil {
+		t.Fatalf("marshaling to JSON failed: %v", err)
+	}
+	got := string(data)
+	expected := `{"significant_terms":{"background_filter":{"term":{"city":"London"}},"execution_hint":"map","field":"crime_type","min_doc_count":10,"shard_size":5}}`
 	if got != expected {
 		t.Errorf("expected\n%s\n,got:\n%s", expected, got)
 	}

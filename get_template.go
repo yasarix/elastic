@@ -1,4 +1,4 @@
-// Copyright 2014 Oliver Eilhard. All rights reserved.
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -7,9 +7,6 @@ package elastic
 import (
 	"encoding/json"
 	"fmt"
-	"log"
-	"net/http"
-	"net/http/httputil"
 	"net/url"
 
 	"github.com/olivere/elastic/uritemplates"
@@ -19,7 +16,6 @@ import (
 // It is documented at http://www.elasticsearch.org/guide/en/elasticsearch/reference/master/search-template.html.
 type GetTemplateService struct {
 	client      *Client
-	debug       bool
 	pretty      bool
 	id          string
 	version     interface{}
@@ -33,32 +29,32 @@ func NewGetTemplateService(client *Client) *GetTemplateService {
 	}
 }
 
-// Id is documented as: Template ID.
+// Id is the template ID.
 func (s *GetTemplateService) Id(id string) *GetTemplateService {
 	s.id = id
 	return s
 }
 
-// Version is documented as: Explicit version number for concurrency control.
+// Version is an explicit version number for concurrency control.
 func (s *GetTemplateService) Version(version interface{}) *GetTemplateService {
 	s.version = version
 	return s
 }
 
-// VersionType is documented as: Specific version type.
+// VersionType is a specific version type.
 func (s *GetTemplateService) VersionType(versionType string) *GetTemplateService {
 	s.versionType = versionType
 	return s
 }
 
 // buildURL builds the URL for the operation.
-func (s *GetTemplateService) buildURL() (string, error) {
+func (s *GetTemplateService) buildURL() (string, url.Values, error) {
 	// Build URL
-	urls, err := uritemplates.Expand("/_search/template/{id}", map[string]string{
+	path, err := uritemplates.Expand("/_search/template/{id}", map[string]string{
 		"id": s.id,
 	})
 	if err != nil {
-		return "", err
+		return "", url.Values{}, err
 	}
 
 	// Add query string parameters
@@ -69,11 +65,8 @@ func (s *GetTemplateService) buildURL() (string, error) {
 	if s.versionType != "" {
 		params.Set("version_type", s.versionType)
 	}
-	if len(params) > 0 {
-		urls += "?" + params.Encode()
-	}
 
-	return urls, nil
+	return path, params, nil
 }
 
 // Validate checks if the operation is valid.
@@ -96,45 +89,23 @@ func (s *GetTemplateService) Do() (*GetTemplateResponse, error) {
 	}
 
 	// Get URL for request
-	urls, err := s.buildURL()
+	path, params, err := s.buildURL()
 	if err != nil {
 		return nil, err
-	}
-
-	// Setup HTTP request
-	req, err := s.client.NewRequest("GET", urls)
-	if err != nil {
-		return nil, err
-	}
-
-	// Debug output?
-	if s.debug {
-		out, _ := httputil.DumpRequestOut((*http.Request)(req), true)
-		log.Printf("%s\n", string(out))
 	}
 
 	// Get HTTP response
-	res, err := s.client.c.Do((*http.Request)(req))
+	res, err := s.client.PerformRequest("GET", path, params, nil)
 	if err != nil {
 		return nil, err
 	}
-	if err := checkResponse(res); err != nil {
+
+	// Return result
+	ret := new(GetTemplateResponse)
+	if err := json.Unmarshal(res.Body, ret); err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
-
-	// Debug output?
-	if s.debug {
-		out, _ := httputil.DumpResponse(res, true)
-		log.Printf("%s\n", string(out))
-	}
-
-	// Decode response
-	resp := new(GetTemplateResponse)
-	if err := json.NewDecoder(res.Body).Decode(resp); err != nil {
-		return nil, err
-	}
-	return resp, nil
+	return ret, nil
 }
 
 type GetTemplateResponse struct {
